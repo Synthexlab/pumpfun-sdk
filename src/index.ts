@@ -1,5 +1,6 @@
 // Export types
 export { TransactionMode } from './types';
+export type { WalletData, WalletGeneratorConfig, TransferResult } from './gen-wallets';
 
 // Export main functions
 export { pumpFunBuy, pumpFunSell } from './swap';
@@ -28,3 +29,9 @@ export {
 
 // Export API functions
 export { getCoinData } from './api';
+
+// Export Wallet Generator
+export { WalletGenerator } from './gen-wallets';
+
+
+
