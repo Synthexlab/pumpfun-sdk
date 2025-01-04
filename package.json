@@ -1,0 +1,26 @@
+{
+  "name": "pumpfun-sdk",
+  "version": "1.0.0",
+  "description": "SDK for interacting with Pump.fun",
+  "author": "Synthexlab",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "prepare": "npm run build"
+  },
+  "keywords": [],
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5.4.5"
+  },
+  "dependencies": {
+    "@solana/spl-token": "^0.4.6",
+    "@solana/web3.js": "^1.91.8",
+    "axios": "^1.6.8",
+    "bs58": "^5.0.0"
+  }
+}
