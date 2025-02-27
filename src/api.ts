@@ -77,9 +77,9 @@ export async function getCoinData(mintStr: string): Promise<CoinData> {
  * @param limit Optional number of tokens to return
  * @returns Promise with market overview data
  */
-export async function getMarketOverview(limit: number = 10): Promise<MarketOverview> {
+export async function getMarketOverview(): Promise<MarketOverview> {
     try {
-        const url = `https://frontend-api-v3.pump.fun/coins?limit=${limit}`;
+        const url = `https://frontend-api-v3.pump.fun/coins/latest`;
         const response = await withRetry(async () => {
             const resp = await axios.get(url, { headers: standardHeaders });
             if (resp.status !== 200) {

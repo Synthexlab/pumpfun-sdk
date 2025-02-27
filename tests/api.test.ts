@@ -119,12 +119,11 @@ describe('API Functions', () => {
       axiosStub.resolves({ status: 200, data: sampleMarketData });
 
       // Call the function with limit=2
-      const result = await getMarketOverview(2);
+      const result = await getMarketOverview();
 
       // Verify the result
       expect(result).to.deep.equal(sampleMarketData);
       expect(axiosStub.calledOnce).to.be.true;
-      expect(axiosStub.firstCall.args[0]).to.include('coins?limit=2');
     });
   });
 
