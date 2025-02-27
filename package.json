@@ -1,6 +1,6 @@
 {
   "name": "pumpfun-sdk",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "SDK for interacting with Pump.fun",
   "author": "Synthexlab",
   "main": "dist/index.js",
