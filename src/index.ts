@@ -1,6 +1,8 @@
 // Export types
 export { TransactionMode } from './types';
 export type { WalletData, WalletGeneratorConfig, TransferResult } from './gen-wallets';
+export type { SwapConfig } from './swap';
+export type { CoinData, MarketOverview } from './api';
 
 // Export main functions
 export { pumpFunBuy, pumpFunSell } from './swap';
@@ -12,7 +14,9 @@ export {
     getCachedBlockhash,
     createTransaction,
     sendAndConfirmTransactionWrapper,
-    bufferFromUInt64
+    bufferFromUInt64,
+    isValidPublicKey,
+    trackTransaction
 } from './utils';
 
 // Export constants
@@ -28,10 +32,24 @@ export {
 } from './constants';
 
 // Export API functions
-export { getCoinData } from './api';
+export { 
+    getCoinData,
+    getMarketOverview,
+    getTokenTransactionHistory,
+    getBuyPriceQuote,
+    getSellPriceQuote
+} from './api';
 
 // Export Wallet Generator
 export { WalletGenerator } from './gen-wallets';
 
-
+// Export error classes
+export {
+    APIError,
+    RetryError,
+    TransactionError,
+    WalletError,
+    RPCError,
+    ValidationError
+} from './errors';
 

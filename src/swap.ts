@@ -1,28 +1,80 @@
-import { Connection, LAMPORTS_PER_SOL, PublicKey, Transaction, TransactionInstruction, clusterApiUrl } from '@solana/web3.js';
+import { Connection, LAMPORTS_PER_SOL, PublicKey, Transaction, TransactionInstruction } from '@solana/web3.js';
 import { getAssociatedTokenAddress, createAssociatedTokenAccountInstruction, TOKEN_PROGRAM_ID } from '@solana/spl-token';
-import { getKeyPairFromPrivateKey, createTransaction, sendAndConfirmTransactionWrapper, bufferFromUInt64, withRetry } from './utils';
-import { getCoinData } from './api';
+import { 
+    getKeyPairFromPrivateKey, 
+    createTransaction, 
+    sendAndConfirmTransactionWrapper, 
+    bufferFromUInt64, 
+    withRetry,
+    trackTransaction,
+    isValidPublicKey,
+    createConnection
+} from './utils';
+import { getCoinData, getBuyPriceQuote } from './api';
 import { TransactionMode } from './types';
 import { GLOBAL, FEE_RECIPIENT, SYSTEM_PROGRAM_ID, RENT, PUMP_FUN_ACCOUNT, PUMP_FUN_PROGRAM, ASSOC_TOKEN_ACC_PROG } from './constants';
+import { ValidationError, TransactionError } from './errors';
 
-export async function pumpFunBuy(transactionMode: TransactionMode, payerPrivateKey: string, mintStr: string, solIn: number, priorityFeeInSol: number = 0, slippageDecimal: number = 0.25) {
+// Configuration options
+export interface SwapConfig {
+    rpcUrl?: string;
+    commitment?: 'processed' | 'confirmed' | 'finalized';
+    trackTx?: boolean;
+}
+
+// Default configuration
+const DEFAULT_CONFIG: SwapConfig = {
+    rpcUrl: "https://api.mainnet-beta.solana.com",
+    commitment: 'confirmed',
+    trackTx: true
+};
+
+/**
+ * Buy tokens on Pump.fun
+ * 
+ * @param transactionMode Transaction mode (Simulation or Execution)
+ * @param payerPrivateKey Base58-encoded private key
+ * @param mintStr Token mint address
+ * @param solIn Amount of SOL to spend
+ * @param priorityFeeInSol Optional priority fee in SOL
+ * @param slippageDecimal Optional slippage tolerance (0-1)
+ * @param config Optional configuration parameters
+ * @returns Promise resolving to transaction signature if executed
+ */
+export async function pumpFunBuy(
+    transactionMode: TransactionMode, 
+    payerPrivateKey: string, 
+    mintStr: string, 
+    solIn: number, 
+    priorityFeeInSol: number = 0, 
+    slippageDecimal: number = 0.25,
+    config: SwapConfig = {}
+) {
+    // Parameter validation
+    if (!payerPrivateKey) {
+        throw new ValidationError('Private key is required');
+    }
+    
+    if (!mintStr || !isValidPublicKey(mintStr)) {
+        throw new ValidationError('Invalid token mint address');
+    }
+    
+    if (solIn <= 0) {
+        throw new ValidationError('SOL amount must be greater than 0');
+    }
+    
+    if (slippageDecimal < 0 || slippageDecimal > 1) {
+        throw new ValidationError('Slippage must be between 0 and 1');
+    }
+    
+    // Merge with default config
+    const finalConfig = { ...DEFAULT_CONFIG, ...config };
+    
     try {
-        const connection = new Connection(
-            "https://mainnet.helius-rpc.com/?api-key=dfa5133f-e9fa-442f-891f-eae3c0b77875",
-            {
-                commitment: 'confirmed',
-                confirmTransactionInitialTimeout: 60000
-            }
-        );
+        const connection = createConnection(finalConfig.rpcUrl!, finalConfig.commitment);
 
-        const coinData = await withRetry(async () => {
-            const data = await getCoinData(mintStr);
-            if (!data) {
-                throw new Error('Failed to retrieve coin data');
-            }
-            return data;
-        });
-
+        // Get coin data
+        const coinData = await getCoinData(mintStr);
         const payer = await getKeyPairFromPrivateKey(payerPrivateKey);
         const owner = payer.publicKey;
         const mint = new PublicKey(mintStr);
@@ -96,42 +148,99 @@ export async function pumpFunBuy(transactionMode: TransactionMode, payerPrivateK
 
         const transaction = await createTransaction(connection, txBuilder.instructions, payer.publicKey, priorityFeeInSol);
         
-        if (transactionMode == TransactionMode.Execution) {
-            const signature = await withRetry(() => 
-                sendAndConfirmTransactionWrapper(connection, transaction, [payer])
-            );
-            console.log('Buy transaction confirmed:', signature);
+        if (transactionMode === TransactionMode.Execution) {
+            const signature = await sendAndConfirmTransactionWrapper(connection, transaction, [payer]);
+            
+            // Track transaction to finality if requested
+            if (finalConfig.trackTx) {
+                await trackTransaction(connection, signature);
+            }
+            
+            return {
+                success: true,
+                signature,
+                expectedOutput: tokenOut,
+                inputAmount: solIn,
+                outputToken: mintStr
+            };
         }
-        else if (transactionMode == TransactionMode.Simulation) {
+        else if (transactionMode === TransactionMode.Simulation) {
             const simulatedResult = await withRetry(() => 
                 connection.simulateTransaction(transaction)
             );
-            console.log(simulatedResult);
+            
+            if (simulatedResult.value.err) {
+                throw new TransactionError(
+                    `Simulation failed: ${simulatedResult.value.err}`,
+                    undefined,
+                    simulatedResult.value.logs || []
+                );
+            }
+            
+            return {
+                success: true,
+                simulation: simulatedResult.value,
+                expectedOutput: tokenOut,
+                inputAmount: solIn,
+                logs: simulatedResult.value.logs
+            };
         }
+        
+        throw new ValidationError('Invalid transaction mode');
     } catch (error) {
-        console.error('Error in pumpFunBuy:', error);
-        throw error;
+        if (error instanceof ValidationError || error instanceof TransactionError) {
+            throw error;
+        }
+        throw new TransactionError(`Error in pumpFunBuy: ${error instanceof Error ? error.message : String(error)}`);
     }
 }
 
-export async function pumpFunSell(transactionMode: TransactionMode, payerPrivateKey: string, mintStr: string, tokenBalance: number, priorityFeeInSol: number = 0, slippageDecimal: number = 0.25) {
+/**
+ * Sell tokens on Pump.fun
+ * 
+ * @param transactionMode Transaction mode (Simulation or Execution)
+ * @param payerPrivateKey Base58-encoded private key
+ * @param mintStr Token mint address
+ * @param tokenBalance Amount of tokens to sell
+ * @param priorityFeeInSol Optional priority fee in SOL
+ * @param slippageDecimal Optional slippage tolerance (0-1)
+ * @param config Optional configuration parameters
+ * @returns Promise resolving to transaction signature if executed
+ */
+export async function pumpFunSell(
+    transactionMode: TransactionMode, 
+    payerPrivateKey: string, 
+    mintStr: string, 
+    tokenBalance: number, 
+    priorityFeeInSol: number = 0, 
+    slippageDecimal: number = 0.25,
+    config: SwapConfig = {}
+) {
+    // Parameter validation
+    if (!payerPrivateKey) {
+        throw new ValidationError('Private key is required');
+    }
+    
+    if (!mintStr || !isValidPublicKey(mintStr)) {
+        throw new ValidationError('Invalid token mint address');
+    }
+    
+    if (tokenBalance <= 0) {
+        throw new ValidationError('Token amount must be greater than 0');
+    }
+    
+    if (slippageDecimal < 0 || slippageDecimal > 1) {
+        throw new ValidationError('Slippage must be between 0 and 1');
+    }
+    
+    // Merge with default config
+    const finalConfig = { ...DEFAULT_CONFIG, ...config };
+    
     try {
-        const connection = new Connection(
-            "https://mainnet.helius-rpc.com/?api-key=dfa5133f-e9fa-442f-891f-eae3c0b77875",
-            {
-                commitment: 'confirmed',
-                confirmTransactionInitialTimeout: 60000
-            }
-        );
+        const connection = createConnection(finalConfig.rpcUrl!, finalConfig.commitment);
 
-        const coinData = await withRetry(async () => {
-            const data = await getCoinData(mintStr);
-            if (!data) {
-                throw new Error('Failed to retrieve coin data');
-            }
-            return data;
-        });
-
+        // Get coin data
+        const coinData = await getCoinData(mintStr);
         const payer = await getKeyPairFromPrivateKey(payerPrivateKey);
         const owner = payer.publicKey;
         const mint = new PublicKey(mintStr);
@@ -164,14 +273,18 @@ export async function pumpFunSell(transactionMode: TransactionMode, payerPrivate
             tokenAccount = tokenAccountAddress;
         }
 
-        const minSolOutput = Math.floor(tokenBalance! * (1 - slippageDecimal) * coinData["virtual_sol_reserves"] / coinData["virtual_token_reserves"]);
+        const minSolOutput = Math.floor(tokenBalance * (1 - slippageDecimal) * coinData.virtual_sol_reserves / coinData.virtual_token_reserves);
+        const expectedSolOutput = Math.floor(tokenBalance * coinData.virtual_sol_reserves / coinData.virtual_token_reserves);
+
+        const BONDING_CURVE = new PublicKey(coinData.bonding_curve);
+        const ASSOCIATED_BONDING_CURVE = new PublicKey(coinData.associated_bonding_curve);
 
         const keys = [
             { pubkey: GLOBAL, isSigner: false, isWritable: false },
             { pubkey: FEE_RECIPIENT, isSigner: false, isWritable: true },
             { pubkey: mint, isSigner: false, isWritable: false },
-            { pubkey: new PublicKey(coinData['bonding_curve']), isSigner: false, isWritable: true },
-            { pubkey: new PublicKey(coinData['associated_bonding_curve']), isSigner: false, isWritable: true },
+            { pubkey: BONDING_CURVE, isSigner: false, isWritable: true },
+            { pubkey: ASSOCIATED_BONDING_CURVE, isSigner: false, isWritable: true },
             { pubkey: tokenAccount, isSigner: false, isWritable: true },
             { pubkey: owner, isSigner: false, isWritable: true },
             { pubkey: SYSTEM_PROGRAM_ID, isSigner: false, isWritable: false },
@@ -196,20 +309,49 @@ export async function pumpFunSell(transactionMode: TransactionMode, payerPrivate
 
         const transaction = await createTransaction(connection, txBuilder.instructions, payer.publicKey, priorityFeeInSol);
 
-        if (transactionMode == TransactionMode.Execution) {
-            const signature = await withRetry(() => 
-                sendAndConfirmTransactionWrapper(connection, transaction, [payer])
-            );
-            console.log('Sell transaction confirmed:', signature);
+        if (transactionMode === TransactionMode.Execution) {
+            const signature = await sendAndConfirmTransactionWrapper(connection, transaction, [payer]);
+            
+            // Track transaction to finality if requested
+            if (finalConfig.trackTx) {
+                await trackTransaction(connection, signature);
+            }
+            
+            return {
+                success: true,
+                signature,
+                expectedOutput: expectedSolOutput / LAMPORTS_PER_SOL,
+                inputAmount: tokenBalance,
+                outputToken: 'SOL'
+            };
         }
-        else if (transactionMode == TransactionMode.Simulation) {
+        else if (transactionMode === TransactionMode.Simulation) {
             const simulatedResult = await withRetry(() => 
                 connection.simulateTransaction(transaction)
             );
-            console.log(simulatedResult);
+            
+            if (simulatedResult.value.err) {
+                throw new TransactionError(
+                    `Simulation failed: ${simulatedResult.value.err}`,
+                    undefined,
+                    simulatedResult.value.logs || []
+                );
+            }
+            
+            return {
+                success: true,
+                simulation: simulatedResult.value,
+                expectedOutput: expectedSolOutput / LAMPORTS_PER_SOL,
+                inputAmount: tokenBalance,
+                logs: simulatedResult.value.logs
+            };
         }
+        
+        throw new ValidationError('Invalid transaction mode');
     } catch (error) {
-        console.error('Error in pumpFunSell:', error);
-        throw error;
+        if (error instanceof ValidationError || error instanceof TransactionError) {
+            throw error;
+        }
+        throw new TransactionError(`Error in pumpFunSell: ${error instanceof Error ? error.message : String(error)}`);
     }
 }

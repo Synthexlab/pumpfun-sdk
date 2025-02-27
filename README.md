@@ -57,6 +57,13 @@ yarn add pumpfun-sdk
   - Transaction simulation before execution
   - Priority fee management
   - Slippage protection
+  - Transaction tracking to finality
+
+- **Market Data**
+  - Token details and pricing
+  - Market overview with trending tokens
+  - Transaction history
+  - Price quotes without execution
 
 - **Wallet Management**
   - Generate multiple wallets
@@ -65,35 +72,64 @@ yarn add pumpfun-sdk
   - Batch operations support
 
 - **Advanced Utilities**
-  - Retry mechanism for failed operations
-  - Rate limiting and backoff strategies
-  - Comprehensive error handling
+  - Enhanced retry mechanism with intelligent backoff
+  - Comprehensive error classification
   - Transaction confirmation tracking
+  - Type-safe interfaces and validation
 
 ## Quick Start
 
 ```typescript
-import { pumpFunBuy, pumpFunSell, TransactionMode, WalletGenerator } from 'pumpfun-sdk';
+import { 
+  pumpFunBuy,
+  pumpFunSell, 
+  TransactionMode, 
+  getCoinData,
+  getMarketOverview,
+  getBuyPriceQuote,
+  WalletGenerator 
+} from 'pumpfun-sdk';
 
-// Initialize wallet generator
+// Get market overview with trending tokens
+const market = await getMarketOverview(10); // Top 10 tokens
+console.log(`Total tokens: ${market.totalTokens}`);
+console.log(`Top token: ${market.tokens[0].name} (${market.tokens[0].mint})`);
+
+// Get detailed coin data
+const coin = await getCoinData('TOKEN_MINT_ADDRESS');
+console.log(`${coin.name} price: ${coin.price_sol} SOL`);
+
+// Get price quote without executing a transaction
+const quote = await getBuyPriceQuote('TOKEN_MINT_ADDRESS', 0.1); // 0.1 SOL
+console.log(`Expected tokens: ${quote.expectedOutputAmount}`);
+console.log(`Price impact: ${(quote.priceImpact * 100).toFixed(2)}%`);
+
+// Execute a buy operation with custom configuration
+const result = await pumpFunBuy(
+    TransactionMode.Execution,
+    'YOUR_PRIVATE_KEY',
+    'TOKEN_MINT_ADDRESS',
+    0.1,          // SOL amount
+    0.0001,       // Priority fee
+    0.25,         // Slippage
+    {             // Optional configuration
+      rpcUrl: 'https://api.mainnet-beta.solana.com',
+      commitment: 'confirmed',
+      trackTx: true
+    }
+);
+console.log(`Transaction signature: ${result.signature}`);
+console.log(`Tokens purchased: ${result.expectedOutput}`);
+
+// Initialize wallet generator for multi-wallet operations
 const generator = new WalletGenerator({
-    rpcUrl: 'https://api.devnet.solana.com',
+    rpcUrl: 'https://api.mainnet-beta.solana.com',
     numberOfWallets: 10,
     solanaToDistribute: 0.1
 });
 
 // Generate wallets
 const wallets = generator.generateWallets();
-
-// Execute a buy operation
-await pumpFunBuy(
-    TransactionMode.Execution,
-    'YOUR_PRIVATE_KEY',
-    'TOKEN_MINT_ADDRESS',
-    0.1,          // SOL amount
-    0.0001,       // Priority fee
-    0.25          // Slippage
-);
 ```
 
 ## Detailed Usage
@@ -188,6 +224,33 @@ try {
 
 ## API Reference
 
+### Market Data Functions
+
+#### getCoinData
+```typescript
+function getCoinData(mintStr: string): Promise<CoinData>
+```
+
+#### getMarketOverview
+```typescript
+function getMarketOverview(limit: number = 50): Promise<MarketOverview>
+```
+
+#### getTokenTransactionHistory
+```typescript
+function getTokenTransactionHistory(mintStr: string, limit: number = 20): Promise<any>
+```
+
+#### getBuyPriceQuote
+```typescript
+function getBuyPriceQuote(mintStr: string, solAmount: number): Promise<any>
+```
+
+#### getSellPriceQuote
+```typescript
+function getSellPriceQuote(mintStr: string, tokenAmount: number): Promise<any>
+```
+
 ### Trading Functions
 
 #### pumpFunBuy
@@ -198,8 +261,17 @@ function pumpFunBuy(
     mintStr: string,
     solIn: number,
     priorityFeeInSol?: number,
-    slippageDecimal?: number
-): Promise<void>
+    slippageDecimal?: number,
+    config?: SwapConfig
+): Promise<{
+    success: boolean;
+    signature?: string;
+    expectedOutput: number;
+    inputAmount: number;
+    outputToken: string;
+    simulation?: any;
+    logs?: string[];
+}>
 ```
 
 #### pumpFunSell
@@ -210,8 +282,17 @@ function pumpFunSell(
     mintStr: string,
     tokenBalance: number,
     priorityFeeInSol?: number,
-    slippageDecimal?: number
-): Promise<void>
+    slippageDecimal?: number,
+    config?: SwapConfig
+): Promise<{
+    success: boolean;
+    signature?: string;
+    expectedOutput: number;
+    inputAmount: number;
+    outputToken: string;
+    simulation?: any;
+    logs?: string[];
+}>
 ```
 
 ### Wallet Management
